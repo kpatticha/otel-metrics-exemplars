@@ -1,0 +1,21 @@
+[project]
+name = "otel-common"
+version = "1.0.0"
+description = "Shared OpenTelemetry bootstrap for the exemplar demo services"
+requires-python = ">=3.11"
+
+# Intentionally empty. Each service's requirements.txt is the single source of
+# truth for versions, and the Dockerfiles install this package with --no-deps
+# so it cannot pull in a second, conflicting SDK.
+#
+# The one hard requirement to know about: exemplars need opentelemetry-sdk
+# >= 1.29.0, where they were wired into the metrics pipeline. Anything older
+# exports data points with no exemplars and no error.
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["otel_common*"]

@@ -1,0 +1,180 @@
+{
+  "uid": "otel-exemplars",
+  "title": "OTel Exemplars (Elasticsearch)",
+  "tags": ["opentelemetry", "exemplars", "elasticsearch"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "type": "text",
+      "title": "What you are looking at",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "Exemplar documents ingested into `exemplars-*.otel-*` by [elastic/elasticsearch#158350](https://github.com/elastic/elasticsearch/pull/158350). Each document is one exemplar: the sampled measurement value, the dimensions of its parent metric series, and the `trace_id` / `span_id` of the request that produced it.\n\nThe **metrics** data stream stores histograms as `exponential_histogram`, which Grafana's Elasticsearch datasource cannot read — for percentiles over those, use ES|QL in Kibana (see the repo README). The exemplar and trace data streams are ordinary fields, so they query fine here.\n\nJoin key back to the parent metric document: `_metric_names_hash`."
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Exemplars ingested",
+      "datasource": { "type": "elasticsearch", "uid": "es-exemplars" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 5 },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "*",
+          "metrics": [{ "id": "1", "type": "count" }],
+          "bucketAggs": []
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Distinct traces referenced",
+      "datasource": { "type": "elasticsearch", "uid": "es-exemplars" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 5 },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "*",
+          "metrics": [{ "id": "1", "type": "cardinality", "field": "trace_id" }],
+          "bucketAggs": []
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Exemplars over time, by service",
+      "datasource": { "type": "elasticsearch", "uid": "es-exemplars" },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 5 },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "*",
+          "metrics": [{ "id": "1", "type": "count" }],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "resource.attributes.service.name",
+              "settings": { "size": "10", "order": "desc", "orderBy": "_count", "min_doc_count": "0" }
+            },
+            {
+              "id": "3",
+              "type": "date_histogram",
+              "field": "@timestamp",
+              "settings": { "interval": "auto", "min_doc_count": "0", "trimEdges": "0" }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Exemplars by HTTP route",
+      "datasource": { "type": "elasticsearch", "uid": "es-exemplars" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 11 },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "_exists_:attributes.http.route",
+          "metrics": [{ "id": "1", "type": "count" }],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "attributes.http.route",
+              "settings": { "size": "15", "order": "desc", "orderBy": "_count", "min_doc_count": "0" }
+            },
+            {
+              "id": "3",
+              "type": "date_histogram",
+              "field": "@timestamp",
+              "settings": { "interval": "auto", "min_doc_count": "0" }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Exemplars by HTTP status code",
+      "datasource": { "type": "elasticsearch", "uid": "es-exemplars" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 11 },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "_exists_:attributes.http.response.status_code",
+          "metrics": [{ "id": "1", "type": "count" }],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "attributes.http.response.status_code",
+              "settings": { "size": "10", "order": "desc", "orderBy": "_count", "min_doc_count": "0" }
+            },
+            {
+              "id": "3",
+              "type": "date_histogram",
+              "field": "@timestamp",
+              "settings": { "interval": "auto", "min_doc_count": "0" }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Raw exemplar documents (value, trace_id, dimensions)",
+      "description": "Copy a trace_id into the Traces panel query below, or into Kibana, to see the request this exemplar came from.",
+      "datasource": { "type": "elasticsearch", "uid": "es-exemplars" },
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 19 },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "*",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "raw_data",
+              "settings": { "size": "100" }
+            }
+          ],
+          "bucketAggs": []
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Spans — paste a trace_id above into the query to resolve it",
+      "datasource": { "type": "elasticsearch", "uid": "es-traces" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 30 },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "trace_id:$trace_id",
+          "metrics": [{ "id": "1", "type": "raw_data", "settings": { "size": "100" } }],
+          "bucketAggs": []
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "trace_id",
+        "label": "trace_id",
+        "type": "textbox",
+        "query": "*",
+        "current": { "text": "*", "value": "*" },
+        "options": [],
+        "hide": 0
+      }
+    ]
+  }
+}

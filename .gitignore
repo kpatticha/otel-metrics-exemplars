@@ -1,0 +1,9 @@
+.env
+.env.env.bak
+__pycache__/
+*.pyc
+.venv/
+
+# Raw OTLP dumps from the collector wire tap.
+collector/out/*
+!collector/out/.gitkeep

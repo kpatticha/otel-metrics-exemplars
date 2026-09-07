@@ -1,0 +1,54 @@
+# Three datasources, one per OTel data stream, because Grafana's Elasticsearch
+# datasource is scoped to a single index pattern.
+#
+# Note on what works here: the exemplar and trace data streams hold ordinary
+# keyword/double fields, so Grafana queries them fine. The *metrics* data
+# stream stores histograms as `exponential_histogram`, a field type Grafana's
+# Elasticsearch datasource does not understand -- percentile queries over those
+# need ES|QL in Kibana. See README, "Viewing the data".
+
+apiVersion: 1
+
+datasources:
+  - name: ES Exemplars
+    uid: es-exemplars
+    type: elasticsearch
+    access: proxy
+    url: $ELASTIC_URL
+    jsonData:
+      index: exemplars-*.otel-*
+      timeField: '@timestamp'
+      interval: Daily
+      logMessageField: trace_id
+      httpHeaderName1: Authorization
+    secureJsonData:
+      httpHeaderValue1: ApiKey $ELASTIC_API_KEY
+    editable: true
+
+  - name: ES Metrics
+    uid: es-metrics
+    type: elasticsearch
+    access: proxy
+    url: $ELASTIC_URL
+    jsonData:
+      index: metrics-*.otel-*
+      timeField: '@timestamp'
+      interval: Daily
+      httpHeaderName1: Authorization
+    secureJsonData:
+      httpHeaderValue1: ApiKey $ELASTIC_API_KEY
+    editable: true
+
+  - name: ES Traces
+    uid: es-traces
+    type: elasticsearch
+    access: proxy
+    url: $ELASTIC_URL
+    jsonData:
+      index: traces-*.otel-*
+      timeField: '@timestamp'
+      interval: Daily
+      httpHeaderName1: Authorization
+    secureJsonData:
+      httpHeaderValue1: ApiKey $ELASTIC_API_KEY
+    editable: true

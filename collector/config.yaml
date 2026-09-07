@@ -1,0 +1,58 @@
+# Optional wire tap. Not in the default path -- the services talk straight to
+# Elasticsearch's _otlp endpoint. Bring this up when you need to see the exact
+# OTLP payload the SDK produced, independent of what Elasticsearch did with it.
+#
+#   docker compose --profile collector up --build
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 docker compose up
+#
+# The debug exporter prints exemplars to the collector log; the file exporter
+# writes raw OTLP JSON to ./collector/out/ so you can grep for exemplar blocks
+# and compare trace ids against what landed in exemplars-*.otel-*.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+
+exporters:
+  # basic, deliberately. verbosity: detailed prints every data point and its
+  # exemplars, which is hundreds of thousands of log lines an hour -- enough to
+  # bury the partial-success warnings from Elasticsearch that you actually want
+  # to read. The file exporters below already capture the full payload, so
+  # switch this to detailed only for a short, targeted look.
+  debug:
+    verbosity: basic
+
+  file/metrics:
+    path: /out/otlp-metrics.json
+  file/traces:
+    path: /out/otlp-traces.json
+
+  # Forward on to Elasticsearch's native OTLP endpoint
+
+  otlphttp/elasticsearch:
+    metrics_endpoint: ${env:ELASTIC_OTLP_ENDPOINT}/v1/metrics
+    traces_endpoint: ${env:ELASTIC_OTLP_ENDPOINT}/v1/traces
+    headers:
+      Authorization: ApiKey ${env:ELASTIC_API_KEY}
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, file/metrics, otlphttp/elasticsearch]
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file/traces, otlphttp/elasticsearch]

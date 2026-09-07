@@ -1,0 +1,154 @@
+# Two Python services, one calling the other, sending OTLP to a collector,
+# which forwards to Elasticsearch's native _otlp endpoint.
+#
+#   docker compose up --build      services + collector + load generator + Grafana
+#
+# The services hold no Elasticsearch credentials: they export to the collector,
+# and the collector is the only component that talks to Elasticsearch. This is
+# also the normal production shape -- applications ship to a collector, and the
+# backend is the collector's concern.
+#
+# Nothing in this project creates an index, a data stream or a template. The
+# collector only POSTs to /_otlp/v1/{metrics,traces}; the scripts only read.
+# Elasticsearch itself creates each data stream on first write, which is why
+# the API key needs auto_configure (see README, "Index creation").
+#
+# Elasticsearch and Kibana are deliberately NOT in here -- you run those
+# yourself, since testing an unmerged Elasticsearch PR means running a build
+# Docker has no image for. Set ELASTIC_URL and ELASTIC_API_KEY in .env.
+
+x-otel-env: &otel-env
+  # --- Where the data goes ---------------------------------------------------
+  # The collector, not Elasticsearch. Override to export straight to the _otlp
+  # endpoint instead, when you want to rule the collector out:
+  #   OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:9200/_otlp \
+  #   OTEL_EXPORTER_OTLP_HEADERS="Authorization=ApiKey $ELASTIC_API_KEY" \
+  #   docker compose up
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+
+  # --- Exemplars -------------------------------------------------------------
+  # trace_based is the spec default and the production-correct choice: a
+  # measurement becomes an exemplar candidate when recorded under a sampled
+  # span. Set always_on to record exemplars regardless of sampling.
+  OTEL_METRICS_EXEMPLAR_FILTER: ${OTEL_METRICS_EXEMPLAR_FILTER:-trace_based}
+
+  # --- Metric shape ----------------------------------------------------------
+  # Delta temporality and base2 exponential histograms are what Elasticsearch
+  # TSDB wants; both are standard spec env vars, so no code knows about them.
+  OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: delta
+  OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION: base2_exponential_bucket_histogram
+  OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-10000}
+
+  # --- Traces ----------------------------------------------------------------
+  # Sampling doubles as exemplar volume control under the trace_based filter.
+  OTEL_TRACES_SAMPLER: parentbased_traceidratio
+  OTEL_TRACES_SAMPLER_ARG: ${TRACE_SAMPLE_RATIO:-1.0}
+
+  # Stable HTTP semantic conventions, so the instrumentation emits
+  # http.server.request.duration rather than the legacy http.server.duration.
+  OTEL_SEMCONV_STABILITY_OPT_IN: http
+
+  DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-local}
+
+x-host-gateway: &host-gateway
+  # Docker Desktop resolves host.docker.internal already; this makes the same
+  # name work on Linux.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  inventory:
+    build:
+      context: .
+      dockerfile: services/inventory/Dockerfile
+    <<: *host-gateway
+    environment:
+      <<: *otel-env
+      RESTOCK_INTERVAL_SECONDS: ${RESTOCK_INTERVAL_SECONDS:-20}
+      RESTOCK_UNITS_PER_SKU: ${RESTOCK_UNITS_PER_SKU:-25}
+    ports:
+      - "${INVENTORY_PORT:-8001}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      - otel-collector
+
+  checkout:
+    build:
+      context: .
+      dockerfile: services/checkout/Dockerfile
+    <<: *host-gateway
+    environment:
+      <<: *otel-env
+      INVENTORY_BASE_URL: http://inventory:8000
+    ports:
+      - "${CHECKOUT_PORT:-8000}:8000"
+    depends_on:
+      inventory:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  loadgen:
+    image: grafana/k6:latest
+    volumes:
+      - ./loadgen:/scripts:ro
+    environment:
+      CHECKOUT_BASE_URL: http://checkout:8000
+      K6_VUS: ${K6_VUS:-10}
+      K6_DURATION: ${K6_DURATION:-30m}
+    command: ["run", "/scripts/script.js"]
+    depends_on:
+      checkout:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    <<: *host-gateway
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      # Consumed by the provisioning files.
+      ELASTIC_URL: ${ELASTIC_URL:-http://host.docker.internal:9200}
+      ELASTIC_API_KEY: ${ELASTIC_API_KEY:-}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+  # ---------------------------------------------------------------------------
+  # The only component that talks to Elasticsearch. It receives OTLP from both
+  # services and forwards it unchanged to /_otlp/v1/{metrics,traces}.
+  #
+  # It also writes every payload it received as raw OTLP JSON to
+  # ./collector/out/, which is how you tell "the SDK never sent an exemplar"
+  # apart from "Elasticsearch did not store it".
+  # ---------------------------------------------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    <<: *host-gateway
+    command: ["--config=/etc/otel/config.yaml"]
+    environment:
+      ELASTIC_OTLP_ENDPOINT: ${ELASTIC_URL:-http://host.docker.internal:9200}/_otlp
+      ELASTIC_API_KEY: ${ELASTIC_API_KEY:-}
+    volumes:
+      - ./collector/config.yaml:/etc/otel/config.yaml:ro
+      - ./collector/out:/out
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+
