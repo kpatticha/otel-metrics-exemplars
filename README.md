@@ -33,7 +33,9 @@ if you want Kibana.
 
 ---
 
-## 1. Elasticsearch, built from the PR
+## 1. SKIP THIS STEP: The PR has been merged
+
+Elasticsearch, built from the PR
 
 Exemplar ingestion is not merged yet, so it has to come from
 [PR #158350](https://github.com/elastic/elasticsearch/pull/158350).
