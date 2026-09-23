@@ -69,6 +69,16 @@ so you don't go looking for them:
 
 In your `kibana` checkout, put this in `config/kibana.dev.yml`:
 
+if you run elasticsearch locally from es snapshot command
+```yaml
+elasticsearch.hosts: ["http://localhost:9200"]
+elasticsearch.username: kibana_system
+elasticsearch.password: changeme
+```
+
+if you run elasticsearch locally with `./gradlew run` command
+
+
 ```yaml
 elasticsearch.hosts: ["http://localhost:9200"]
 elasticsearch.username: elastic-admin
