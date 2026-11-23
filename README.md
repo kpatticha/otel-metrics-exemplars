@@ -25,85 +25,67 @@ k6 ──▶ checkout-service ──HTTP──▶ inventory-service
 
 # Running this locally
 
-Five steps: Elasticsearch from the PR branch, Kibana pointed at it, an API key,
-then Docker.
+You need Git, Docker with Compose, and Python 3.
 
-You need Docker with Compose, a JDK for the Elasticsearch build, and Node/Yarn
-if you want Kibana.
+## 1. Elasticsearch and Kibana
 
----
-
-## 1. SKIP THIS STEP: The PR has been merged
-
-Elasticsearch, built from the PR
-
-Exemplar ingestion is not merged yet, so it has to come from
-[PR #158350](https://github.com/elastic/elasticsearch/pull/158350).
-
-In your `elasticsearch` checkout:
+Run Elasticsearch and Kibana locally from your `kibana` checkout, using a
+snapshot build of Elasticsearch:
 
 ```bash
-gh pr checkout 158350 --repo elastic/elasticsearch
+pnpm kbn es snapshot
 ```
 
 ```bash
-./gradlew run
+pnpm start
 ```
 
-Leave it running. It listens on `http://localhost:9200` with these credentials:
+Elasticsearch listens on `http://localhost:9200` and Kibana on
+`http://localhost:5601`, with the credentials `elastic` / `changeme`.
 
-```
-ES_USERNAME=elastic-admin
-ES_PASSWORD=elastic-password
-```
-
-Two things are already handled for you by `./gradlew run`, and are worth knowing
-so you don't go looking for them:
-
-- **The feature flag is on.** Ingestion sits behind the `metric_exemplars`
-  feature flag, and Elasticsearch enables every flag automatically on snapshot
-  builds — which is what `gradlew run` produces. No system property needed.
-- **The index templates install themselves**, including `exemplars-otel@template`.
-
-## 2. Kibana, pointed at that cluster
-
-In your `kibana` checkout, put this in `config/kibana.dev.yml`:
-
-if you run elasticsearch locally from es snapshot command
-```yaml
-elasticsearch.hosts: ["http://localhost:9200"]
-elasticsearch.username: kibana_system
-elasticsearch.password: changeme
-```
-
-if you run elasticsearch locally with `./gradlew run` command
-
-
-```yaml
-elasticsearch.hosts: ["http://localhost:9200"]
-elasticsearch.username: elastic-admin
-elasticsearch.password: elastic-password
-```
+Exemplar ingestion sits behind the `metric_exemplars` feature flag, which
+snapshot builds turn on by default. On a release build, start Elasticsearch
+with:
 
 ```bash
-yarn start
+ES_JAVA_OPTS="-Des.metric_exemplars_feature_flag_enabled=true" pnpm kbn es snapshot
 ```
 
-Kibana comes up on `http://localhost:5601`.
+## 2. Clone this repo
 
-If you already had a `kibana.dev.yml` pointing at a different cluster, the
-password is the thing that usually catches people out — it must be the
-`elastic-password` above, not whatever your previous cluster used.
+```bash
+git clone git@github.com:kpatticha/otel-metrics-exemplars.git
+cd otel-metrics-exemplars
+```
 
-## 3. An API key for the collector
+## 3. Configure `.env`
 
 ```bash
 cp .env.example .env
 ```
 
-Create an API key from Kibana (Not the onboarding page but management page)
+Set the Elasticsearch credentials in `.env`:
 
-That writes `ELASTIC_API_KEY` into `.env`.
+```
+ES_USERNAME=elastic
+ES_PASSWORD=changeme
+```
+
+Create an API key for the collector. The script writes `ELASTIC_API_KEY` into
+`.env`:
+
+```bash
+./scripts/exemplars.py api-key
+```
+
+Then check the cluster and the key:
+
+```bash
+./scripts/exemplars.py check
+```
+
+The collector reaches Elasticsearch at `http://host.docker.internal:9200`. To
+use another address, add `ELASTIC_URL=...` to `.env`.
 
 ## 4. Start the python services
 
@@ -119,5 +101,19 @@ Wait ~20 seconds for the first metric export.
 
 ## 5. Check it worked
 
+```bash
+./scripts/exemplars.py verify
+```
+
 **Kibana**, `http://localhost:5601` — Discover on `exemplars-generic.otel-default`,
 or ES|QL:
+
+```esql
+FROM exemplars-generic.otel-default | SORT @timestamp DESC | LIMIT 20
+```
+
+## Troubleshooting
+
+- Did the services send exemplars? `grep -c exemplars collector/out/otlp-metrics.json`
+- Did Elasticsearch reject any? `docker compose logs otel-collector | grep "Partial success"`
+- Changed the API key? Run `docker compose up -d` again so the collector picks it up.
